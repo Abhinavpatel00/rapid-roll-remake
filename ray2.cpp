@@ -109,7 +109,7 @@ void DrawGame(const Player& player, const std::vector<Tile>& tiles, int score) {
         DrawRectangle(tile.x, tile.y, tile.width, tile.height, tile.color);
     }
 
-    DrawText("Predictable Tiles Game", 10, 10, 20, GREEN);
+    DrawText("is this necessary", 10, 10, 20, GREEN);
     DrawText(TextFormat("Score: %d", score), 10, 40, 20, GREEN);
 
     EndDrawing();
