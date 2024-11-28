@@ -2,6 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <cstdlib>
 
 const int SCREEN_WIDTH = 1024;
 const int SCREEN_HEIGHT = 600;
@@ -12,10 +13,12 @@ const int PLAYER_RADIUS = 15;
 const int PLAYER_SPEED = 5;
 const float GRAVITY = 0.5f;
 const float SPAWN_INTERVAL = 0.5f;
+const int MAX_LIFELINES = 5; // Max number of lifelines
 
 struct Tile {
     int x, y, width, height;
     Color color;
+    bool hasLifeline; // To track if the tile has a lifeline
 };
 
 struct Player {
@@ -32,14 +35,16 @@ float PredictableRandom(unsigned int& seed) {
 
 Tile GenerateTile(unsigned int& seed, float& lastX, bool isFirstTile = false) {
     if (isFirstTile) {
-        return {SCREEN_WIDTH / 2 - TILE_WIDTH / 2, SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, BLUE};
+        return {SCREEN_WIDTH / 2 - TILE_WIDTH / 2, SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, BLUE, false};
     }
     
     float offsetFactor = (PredictableRandom(seed) * 2 - 1) * 200.0f;
     float newX = std::clamp(lastX + offsetFactor, 0.0f, static_cast<float>(SCREEN_WIDTH - TILE_WIDTH));
     lastX = newX;
 
-    return {static_cast<int>(newX), SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, BLUE};
+    // Add lifeline randomly to tiles
+    bool hasLifeline = (rand() % 10) == 0; // 10% chance for lifeline
+    return {static_cast<int>(newX), SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, BLUE, hasLifeline};
 }
 
 bool CheckCollisionWithTile(const Player& player, const Tile& tile) {
@@ -58,7 +63,7 @@ void UpdatePlayerMovement(Player& player) {
     }
 }
 
-void ApplyGravity(Player& player, const std::vector<Tile>& tiles, bool& gameOver) {
+void ApplyGravity(Player& player, const std::vector<Tile>& tiles, bool& gameOver, int& lifelines) {
     if (tiles.size() < 4) return; 
 
     player.velocityY += GRAVITY;  
@@ -70,23 +75,35 @@ void ApplyGravity(Player& player, const std::vector<Tile>& tiles, bool& gameOver
             player.velocityY = 0;    
             player.isOnTile = true;
             player.currentTile = const_cast<Tile*>(&tile);
+
+            if (tile.hasLifeline) {
+                lifelines = std::min(lifelines + 1, MAX_LIFELINES);      
+            }
             landed = true;
             break;
         }
     }
 
-  if (!landed) {
+    if (!landed) {
         player.isOnTile = false;
     }
-    if (player.y - player.radius > SCREEN_HEIGHT) {
-        gameOver = true;
+    if ( player.y -player.radius < 0 || player.y - player.radius > SCREEN_HEIGHT) {
+
+      if (lifelines > 0) {
+            lifelines--;
+            // Reset player to middle of screen
+            player.y = SCREEN_HEIGHT - 100;
+            player.velocityY = 0;
+        } else {
+            gameOver = true;
+        }
     }
 }
 
 void UpdateTiles(std::vector<Tile>& tiles, Player& player, bool& gameOver) {
     for (auto& tile : tiles) {
         tile.y -= TILE_SPEED; 
-             if (player.isOnTile && player.currentTile == &tile) {
+        if (player.isOnTile && player.currentTile == &tile) {
             player.y -= TILE_SPEED;
         }
     }
@@ -95,27 +112,30 @@ void UpdateTiles(std::vector<Tile>& tiles, Player& player, bool& gameOver) {
         tiles.end()
     );
 
-    if (player.y - player.radius > SCREEN_HEIGHT) {
-        gameOver = true;
-    }
+    // if (player.y - player.radius > SCREEN_HEIGHT) {
+    //     gameOver = true;
+    // }
 }
 
-void DrawGame(const Player& player, const std::vector<Tile>& tiles, int score) {
+void DrawGame(const Player& player, const std::vector<Tile>& tiles, int score, int lifelines) {
     BeginDrawing();
     ClearBackground(ORANGE);
 
     DrawCircle(player.x, player.y, player.radius, GREEN); 
     for (const auto& tile : tiles) {
         DrawRectangle(tile.x, tile.y, tile.width, tile.height, tile.color);
+        if (tile.hasLifeline) {
+            DrawText("L", tile.x + 25, tile.y -12, 20, RED); // Draw Lifeline indicator
+        }
     }
 
-    DrawText("is this necessary", 10, 10, 20, GREEN);
     DrawText(TextFormat("Score: %d", score), 10, 40, 20, GREEN);
+    DrawText(TextFormat("Lifelines: %d", lifelines), 10, 70, 20, GREEN);
 
     EndDrawing();
 }
 
-void RestartGame(Player& player, std::vector<Tile>& tiles, unsigned int& randomSeed, float& lastTileX, int& score, bool& gameOver) {
+void RestartGame(Player& player, std::vector<Tile>& tiles, unsigned int& randomSeed, float& lastTileX, int& score, bool& gameOver, int& lifelines) {
     player.x = SCREEN_WIDTH / 2;
     player.y = SCREEN_HEIGHT - 100;
     player.velocityY = 0;
@@ -126,6 +146,7 @@ void RestartGame(Player& player, std::vector<Tile>& tiles, unsigned int& randomS
     tiles.push_back(GenerateTile(randomSeed, lastTileX, true));      
     score = 0;
     gameOver = false;
+    lifelines = MAX_LIFELINES; // Reset lifelines
 }
 
 int main() {
@@ -137,8 +158,9 @@ int main() {
 
     std::vector<Tile> tiles;
     float spawnTimer = 0.0f;
+    int lifelines = MAX_LIFELINES;
 
-        Player player = {SCREEN_WIDTH / 2, SCREEN_HEIGHT - 100, PLAYER_RADIUS, false, 0.0f, nullptr};
+    Player player = {SCREEN_WIDTH / 2, SCREEN_HEIGHT - 100, PLAYER_RADIUS, false, 0.0f, nullptr};
     tiles.push_back(GenerateTile(randomSeed, lastTileX, true));  
     int score = 0;
     bool gameOver = false;
@@ -149,20 +171,21 @@ int main() {
 
         if (spawnTimer >= SPAWN_INTERVAL) {
             spawnTimer = 0.0f;
-            tiles.push_back(GenerateTile(randomSeed, lastTileX));         }
+            tiles.push_back(GenerateTile(randomSeed, lastTileX));         
+        }
 
         UpdatePlayerMovement(player);
-        ApplyGravity(player, tiles, gameOver);
+        ApplyGravity(player, tiles, gameOver, lifelines);
         UpdateTiles(tiles, player, gameOver);
 
         score += static_cast<int>(deltaTime * 100);  
-        DrawGame(player, tiles, score);
+        DrawGame(player, tiles, score, lifelines);
 
         if (gameOver) {
             DrawText("GAME OVER! Press 'R' to Restart", SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2, 30, RED);
 
             if (IsKeyPressed(KEY_R)) {
-                RestartGame(player, tiles, randomSeed, lastTileX, score, gameOver);
+                RestartGame(player, tiles, randomSeed, lastTileX, score, gameOver, lifelines);
             }
         }
     }
