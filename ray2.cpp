@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 
-const int SCREEN_WIDTH = 1024;
+const int SCREEN_WIDTH = 720;
 const int SCREEN_HEIGHT = 600;
 const int TILE_WIDTH = 80;
 const int TILE_HEIGHT = 10;
@@ -13,12 +13,12 @@ const int PLAYER_RADIUS = 15;
 const int PLAYER_SPEED = 5;
 const float GRAVITY = 0.5f;
 const float SPAWN_INTERVAL = 0.5f;
-const int MAX_LIFELINES = 5; // Max number of lifelines
+const int MAX_LIFELINES = 5;
 
 struct Tile {
     int x, y, width, height;
     Color color;
-    bool hasLifeline; // To track if the tile has a lifeline
+    bool hasLifeline; 
 };
 
 struct Player {
@@ -28,10 +28,28 @@ struct Player {
     Tile* currentTile;
 };
 
+struct Trail {
+    int x,y;
+    float alpha;
+};
+std::vector<Trail> playerTrail;
+
+
 float PredictableRandom(unsigned int& seed) {
     seed = seed * 1664525 + 1013904223; 
     return fmodf(seed / static_cast<float>(0xFFFFFFFF), 1.0f);
+
 }
+Color RandomColor(unsigned int& seed) {
+    return Color{
+        static_cast<unsigned char>(PredictableRandom(seed) * 255),
+        static_cast<unsigned char>(PredictableRandom(seed) * 255),
+        static_cast<unsigned char>(PredictableRandom(seed) * 255),
+        255
+    };
+}
+
+
 
 Tile GenerateTile(unsigned int& seed, float& lastX, bool isFirstTile = false) {
     if (isFirstTile) {
@@ -44,7 +62,7 @@ Tile GenerateTile(unsigned int& seed, float& lastX, bool isFirstTile = false) {
 
     // Add lifeline randomly to tiles
     bool hasLifeline = (rand() % 10) == 0; // 10% chance for lifeline
-    return {static_cast<int>(newX), SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, BLUE, hasLifeline};
+    return {static_cast<int>(newX), SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, RandomColor(seed), hasLifeline};
 }
 
 bool CheckCollisionWithTile(const Player& player, const Tile& tile) {
@@ -54,6 +72,24 @@ bool CheckCollisionWithTile(const Player& player, const Tile& tile) {
             player.y - player.radius < tile.y + tile.height);
 }
 
+void UpdatePlayerTrail(Player player){
+Trail newTrail = {player.x, player.y, 1.0f};
+    playerTrail.push_back(newTrail);
+  
+    for (auto & t : playerTrail) {
+        t.alpha -= 0.05f;
+    }
+       playerTrail.erase(std::remove_if(playerTrail.begin(), playerTrail.end(),
+                                     [](const Trail& t) { return t.alpha <= 0.0f; }),
+                      playerTrail.end());
+
+} 
+
+void DrawPlayerTrail() {
+    for (const auto& t : playerTrail) {
+        DrawCircle(t.x, t.y, PLAYER_RADIUS * t.alpha, Fade(GREEN, t.alpha));
+    }
+}
 void UpdatePlayerMovement(Player& player) {
     if (IsKeyDown(KEY_RIGHT)) {
         player.x = std::min(player.x + PLAYER_SPEED, SCREEN_WIDTH - player.radius);
@@ -63,21 +99,22 @@ void UpdatePlayerMovement(Player& player) {
     }
 }
 
-void ApplyGravity(Player& player, const std::vector<Tile>& tiles, bool& gameOver, int& lifelines) {
+void ApplyGravity(Player& player,std::vector<Tile>& tiles, bool& gameOver, int& lifelines) {
     if (tiles.size() < 4) return; 
 
     player.velocityY += GRAVITY;  
     player.y += static_cast<int>(player.velocityY);  
     bool landed = false;
-    for (const auto& tile : tiles) {
+    for ( auto& tile : tiles) {
         if (CheckCollisionWithTile(player, tile) && player.velocityY > 0) {
             player.y = tile.y - player.radius;  
             player.velocityY = 0;    
             player.isOnTile = true;
-            player.currentTile = const_cast<Tile*>(&tile);
-
+            player.currentTile = &tile;
+           
             if (tile.hasLifeline) {
-                lifelines = std::min(lifelines + 1, MAX_LIFELINES);      
+                lifelines = std::min(lifelines + 1, MAX_LIFELINES);  
+                 tile.hasLifeline = false; // not using const become we need to modify tile lifetime has read to add only +1 
             }
             landed = true;
             break;
@@ -91,9 +128,10 @@ void ApplyGravity(Player& player, const std::vector<Tile>& tiles, bool& gameOver
 
       if (lifelines > 0) {
             lifelines--;
-            // Reset player to middle of screen
-            player.y = SCREEN_HEIGHT - 100;
+            player.y = SCREEN_HEIGHT - SCREEN_HEIGHT/2;
             player.velocityY = 0;
+            player.isOnTile = false;
+            player.currentTile = nullptr;
         } else {
             gameOver = true;
         }
@@ -112,20 +150,18 @@ void UpdateTiles(std::vector<Tile>& tiles, Player& player, bool& gameOver) {
         tiles.end()
     );
 
-    // if (player.y - player.radius > SCREEN_HEIGHT) {
-    //     gameOver = true;
-    // }
 }
 
 void DrawGame(const Player& player, const std::vector<Tile>& tiles, int score, int lifelines) {
     BeginDrawing();
     ClearBackground(ORANGE);
 
+    DrawPlayerTrail(); // Draw trail before the player
     DrawCircle(player.x, player.y, player.radius, GREEN); 
     for (const auto& tile : tiles) {
         DrawRectangle(tile.x, tile.y, tile.width, tile.height, tile.color);
         if (tile.hasLifeline) {
-            DrawText("L", tile.x + 25, tile.y -12, 20, RED); // Draw Lifeline indicator
+            DrawText("L", tile.x + 25, tile.y -12, 20, RED);
         }
     }
 
@@ -137,7 +173,7 @@ void DrawGame(const Player& player, const std::vector<Tile>& tiles, int score, i
 
 void RestartGame(Player& player, std::vector<Tile>& tiles, unsigned int& randomSeed, float& lastTileX, int& score, bool& gameOver, int& lifelines) {
     player.x = SCREEN_WIDTH / 2;
-    player.y = SCREEN_HEIGHT - 100;
+    player.y = SCREEN_HEIGHT - SCREEN_HEIGHT/2;
     player.velocityY = 0;
     player.isOnTile = false;
     player.currentTile = nullptr;
@@ -153,6 +189,7 @@ int main() {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "no name decided ");
     SetTargetFPS(60);
 
+    Texture2D background = LoadTexture("lol.jpg");
     unsigned int randomSeed = 12345;
     float lastTileX = SCREEN_WIDTH / 2.0f;
 
@@ -160,7 +197,7 @@ int main() {
     float spawnTimer = 0.0f;
     int lifelines = MAX_LIFELINES;
 
-    Player player = {SCREEN_WIDTH / 2, SCREEN_HEIGHT - 100, PLAYER_RADIUS, false, 0.0f, nullptr};
+    Player player = {SCREEN_WIDTH / 2, SCREEN_HEIGHT - SCREEN_HEIGHT/2, PLAYER_RADIUS, false, 0.0f, nullptr};
     tiles.push_back(GenerateTile(randomSeed, lastTileX, true));  
     int score = 0;
     bool gameOver = false;
@@ -177,8 +214,16 @@ int main() {
         UpdatePlayerMovement(player);
         ApplyGravity(player, tiles, gameOver, lifelines);
         UpdateTiles(tiles, player, gameOver);
-
+        UpdatePlayerTrail(player);
+       if (!gameOver){
         score += static_cast<int>(deltaTime * 100);  
+        }
+
+
+
+        DrawTexture(background, 0, 0, WHITE);
+
+
         DrawGame(player, tiles, score, lifelines);
 
         if (gameOver) {
@@ -188,7 +233,11 @@ int main() {
                 RestartGame(player, tiles, randomSeed, lastTileX, score, gameOver, lifelines);
             }
         }
+
+    
     }
+
+  
 
     CloseWindow();
     return 0;
