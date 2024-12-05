@@ -18,7 +18,16 @@ const int MAX_LIFELINES = 5;
 struct Tile {
     int x, y, width, height;
     Color color;
-    bool hasLifeline; 
+    bool hasLifeline;
+    bool hasbomb; 
+};
+
+struct Particle {
+    Vector2 position;
+    Vector2 velocity;
+    float alpha;
+    float size;
+    Color color;
 };
 
 struct Player {
@@ -31,8 +40,15 @@ struct Player {
 struct Trail {
     int x,y;
     float alpha;
+    Color color;
+};
+ struct bomb {
+    int x,y ,radius;
+    Color color ;
+    float vecocity_x ;
 };
 std::vector<Trail> playerTrail;
+std::vector<Particle> particles;
 
 
 float PredictableRandom(unsigned int& seed) {
@@ -59,10 +75,10 @@ Tile GenerateTile(unsigned int& seed, float& lastX, bool isFirstTile = false) {
     float offsetFactor = (PredictableRandom(seed) * 2 - 1) * 200.0f;
     float newX = std::clamp(lastX + offsetFactor, 0.0f, static_cast<float>(SCREEN_WIDTH - TILE_WIDTH));
     lastX = newX;
-
+    bool hasbomb = (rand() % 5) == 0; // 10% chance for
     // Add lifeline randomly to tiles
     bool hasLifeline = (rand() % 10) == 0; // 10% chance for lifeline
-    return {static_cast<int>(newX), SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, RandomColor(seed), hasLifeline};
+    return {static_cast<int>(newX), SCREEN_HEIGHT, TILE_WIDTH, TILE_HEIGHT, RandomColor(seed), hasLifeline , hasbomb };
 }
 
 bool CheckCollisionWithTile(const Player& player, const Tile& tile) {
@@ -85,6 +101,56 @@ Trail newTrail = {player.x, player.y, 1.0f};
 
 } 
 
+void UpdateParticles(float deltaTime) {
+    for (auto& p : particles) {
+        p.position.x += p.velocity.x * deltaTime;
+        p.position.y += p.velocity.y * deltaTime;
+        p.alpha -= deltaTime * 0.5f;  // Slow down fade
+        p.size -= deltaTime * 2.0f;   // Slow down shrink
+    }
+    particles.erase(std::remove_if(particles.begin(), particles.end(),
+                                   [](const Particle& p) { return p.alpha <= 0.0f || p.size <= 0.0f; }),
+                    particles.end());
+}
+
+void GenerateExplosion(Vector2 position, int count) {
+    for (int i = 0; i < count; i++) {
+        Particle p;
+        float angle = static_cast<float>(rand() % 360) * DEG2RAD; // Random direction
+        float speed = static_cast<float>((rand() % 50) + 50) / 10.0f; // Random speed
+        p.position = position;
+        p.velocity = { static_cast<float>(cos(angle)) * speed, static_cast<float>(sin(angle)) * speed };
+        p.alpha = 1.0f;
+        p.size = 8.0f + static_cast<float>(rand() % 4); // Base size
+        p.color = (i % 2 == 0) ? RED : YELLOW;
+        particles.push_back(p);
+    }
+}
+
+
+void DrawParticles() {
+    for (const auto& p : particles) {
+        DrawCircleV(p.position, p.size, Fade(p.color, p.alpha));
+    }
+}
+void CheckBombCollision(Player& player, std::vector<bomb>& bombs, bool& gameOver, int& lifelines) {
+    for (const auto& b : bombs) {
+        if (CheckCollisionCircles(Vector2{static_cast<float>(player.x), static_cast<float>(player.y)}, player.radius,
+                                  Vector2{static_cast<float>(b.x), static_cast<float>(b.y)}, b.radius)) {
+            GenerateExplosion({ static_cast<float>(b.x), static_cast<float>(b.y) }, 20); // Trigger explosion
+            if (lifelines > 0) {
+                lifelines--;
+                player.y = SCREEN_HEIGHT - SCREEN_HEIGHT / 2;
+                player.velocityY = 0;
+                player.isOnTile = false;
+                player.currentTile = nullptr;
+            } else {
+                gameOver = true;
+            }
+        }
+    }
+}
+
 void DrawPlayerTrail() {
     for (const auto& t : playerTrail) {
         DrawCircle(t.x, t.y, PLAYER_RADIUS * t.alpha, Fade(GREEN, t.alpha));
@@ -96,6 +162,22 @@ void UpdatePlayerMovement(Player& player) {
     }
     if (IsKeyDown(KEY_LEFT)) {
         player.x = std::max(player.x - PLAYER_SPEED, player.radius);
+    }
+}
+
+std::vector<bomb> bombs;
+
+void drawbomb() {
+    static Texture2D bomb = LoadTexture("bomb2.png");
+
+    for (const auto& b : bombs) {
+
+            // Draw the bomb texture centered at the bomb's position
+            DrawTexture(bomb, 
+                b.x - bomb.width/2, 
+                b.y - bomb.height/2, 
+                b.color);
+      
     }
 }
 
@@ -156,12 +238,17 @@ void DrawGame(const Player& player, const std::vector<Tile>& tiles, int score, i
     BeginDrawing();
     ClearBackground(ORANGE);
 
-    DrawPlayerTrail(); // Draw trail before the player
+    DrawPlayerTrail();
+    
+       DrawParticles();
+       drawbomb(); // Render particles here
+     // Draw trail before the player
     DrawCircle(player.x, player.y, player.radius, GREEN); 
     for (const auto& tile : tiles) {
         DrawRectangle(tile.x, tile.y, tile.width, tile.height, tile.color);
+    static Texture2D lifelineimage=   LoadTexture("newgojo.jpg");
         if (tile.hasLifeline) {
-            DrawText("L", tile.x + 25, tile.y -12, 20, RED);
+            DrawTexture( lifelineimage, tile.x + 25, tile.y -12, RED);
         }
     }
 
@@ -185,6 +272,34 @@ void RestartGame(Player& player, std::vector<Tile>& tiles, unsigned int& randomS
     lifelines = MAX_LIFELINES; // Reset lifelines
 }
 
+
+
+void UpdateBombs(std::vector<bomb>& bombs, float deltaTime) {
+    for (auto& b : bombs) {
+        b.y += static_cast<int>(b.vecocity_x * deltaTime);
+        if (b.y > SCREEN_HEIGHT) {
+            b.y = 0;
+            b.x = rand() % SCREEN_WIDTH;
+        }
+    }
+}
+
+
+
+void SpawnBomb(std::vector<bomb>& bombs, unsigned int& randomSeed) {
+    bomb newBomb;
+    newBomb.x = rand() % SCREEN_WIDTH;
+    newBomb.y = 0;
+    newBomb.radius = 10;
+    newBomb.color = RED;
+    newBomb.vecocity_x = 100.0f + PredictableRandom(randomSeed) * 200.0f;
+    bombs.push_back(newBomb);
+}
+
+void RestartBombs(std::vector<bomb>& bombs) {
+    bombs.clear();
+}
+
 int main() {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "no name decided ");
     SetTargetFPS(60);
@@ -197,8 +312,8 @@ int main() {
     float spawnTimer = 0.0f;
     int lifelines = MAX_LIFELINES;
 
-    Player player = {SCREEN_WIDTH / 2, SCREEN_HEIGHT - SCREEN_HEIGHT/2, PLAYER_RADIUS, false, 0.0f, nullptr};
-    tiles.push_back(GenerateTile(randomSeed, lastTileX, true));  
+    Player player = {SCREEN_WIDTH / 2, SCREEN_HEIGHT - SCREEN_HEIGHT / 2, PLAYER_RADIUS, false, 0.0f, nullptr};
+    tiles.push_back(GenerateTile(randomSeed, lastTileX, true));
     int score = 0;
     bool gameOver = false;
 
@@ -208,22 +323,26 @@ int main() {
 
         if (spawnTimer >= SPAWN_INTERVAL) {
             spawnTimer = 0.0f;
-            tiles.push_back(GenerateTile(randomSeed, lastTileX));         
+            tiles.push_back(GenerateTile(randomSeed, lastTileX));
+            if (rand() % 5 == 0) { // 20% chance to spawn a bomb
+                SpawnBomb(bombs, randomSeed);
+            }
         }
 
         UpdatePlayerMovement(player);
         ApplyGravity(player, tiles, gameOver, lifelines);
         UpdateTiles(tiles, player, gameOver);
         UpdatePlayerTrail(player);
-       if (!gameOver){
-        score += static_cast<int>(deltaTime * 100);  
+        UpdateBombs(bombs, deltaTime);
+        CheckBombCollision(player, bombs, gameOver, lifelines);
+UpdateParticles(deltaTime); // Update particle animations
+DrawParticles(); // Draw particles
+
+        if (!gameOver) {
+            score += static_cast<int>(deltaTime * 100);
         }
 
-
-
         DrawTexture(background, 0, 0, WHITE);
-
-
         DrawGame(player, tiles, score, lifelines);
 
         if (gameOver) {
@@ -231,15 +350,11 @@ int main() {
 
             if (IsKeyPressed(KEY_R)) {
                 RestartGame(player, tiles, randomSeed, lastTileX, score, gameOver, lifelines);
+                RestartBombs(bombs);
             }
         }
-
-    
     }
-
-  
 
     CloseWindow();
     return 0;
 }
-
